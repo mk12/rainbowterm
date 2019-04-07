@@ -20,6 +20,8 @@ import xml.etree.ElementTree as ET
 
 PROGRAM = "rainbowterm"
 
+ITERM2_PREFS_FILE = "com.googlecode.iterm2.plist"
+
 COLOR_NAMES = [
     "fg",
     "bg",
@@ -457,10 +459,10 @@ class Rainbowterm:
         print_status(end="\n")
 
     def command_load(self, args):
-        plist = args.file or self.config_string("iterm2", "plist")
+        plist = args.file or self.config_string("iterm2", "prefs")
         if not plist:
             fail("must specify plist file with --file")
-        plist = Path(plist).expanduser()
+        plist = Path(plist).expanduser() / ITERM2_PREFS_FILE
         if not plist.exists():
             fail(f"{plist}: file not found")
         with open(plist) as file:
