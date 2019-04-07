@@ -34,7 +34,7 @@ plist = /path/to/your/com.googlecode.iterm2.plist
 
 Now, run `rainbowterm load` to parse your custom color presets. If you don't have any, see the section on Base16 below.
 
-At this point, you can run `rainbowterm` to enter interactive mode:
+At this point, you can run `rainbowterm set -p PRESET` to switch to the given color preset. Alternatively, run `rainbowterm` to enter interactive mode:
 
 ```
 j  next
@@ -48,7 +48,7 @@ q  quit
 
 Use <kbd>j</kbd> and <kbd>k</kbd> to navigate through the color presets and instantly apply them. This is possible thanks to iTerm2's [proprietary escape codes][esc]. (It also works if you're inside tmux.) If you have [fzf][fzf] installed, use <kbd>p</kbd> to fuzzy-search for presets by name.
 
-You can also choose "favorite" presets using <kbd>f</kbd>. This just writes to `~/.config/rainbowterm/favorites`, which you can view with `rainbowterm edit -f`. The favorites are used when you pick a random preset with `rainbowterm set -r` or `rainbowterm set -s`.
+You can also choose "favorite" presets using <kbd>f</kbd>. This just writes to `~/.config/rainbowterm/favorites`, which you can view with `rainbowterm edit -f`. The favorites are used for `rainbowterm set -r` (random preset) and `rainbowterm set -s` (smart-random, based on time of day and ambient light).
 
 Last, but not least, you can animate the transition between themes using the `-a` flag with `rainbowterm set`. This seems to work better when the Metal renderer is enabled. You can configure it with the following two options in `config.ini`:
 
@@ -72,7 +72,7 @@ For more information on a particular command `CMD`, run `rainbowterm CMD -h`.
 
 ## Base16
 
-Rainbowterm works great in conjunction with [Base16][b16]. In particular, you can get ~100 great iTerm2 color presets from [base16-iterm2][b16i2]. If you stick with the ANSI color palette (rather than using the 256 color version), Rainbowterm's updates can instantly affect all your running programs (e.g., shell, tmux, vim). See chriskempson/base16#174 for further explanation.
+Rainbowterm works great in conjunction with [Base16][b16]. In particular, you can get ~100 great iTerm2 color presets from [base16-iterm2][b16i2]. If you stick with the ANSI color palette (rather than using the 256 color version), Rainbowterm's updates can instantly affect all your running programs (e.g., shell, tmux, vim). See [chriskempson/base16#174](https://github.com/chriskempson/base16/issues/174) for more explanation.
 
 ## License
 
