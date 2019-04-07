@@ -13,6 +13,7 @@ import random
 import subprocess
 import sys
 import termios
+import time
 import tty
 import xml.etree.ElementTree as ET
 
@@ -92,6 +93,10 @@ f  toggle favorite
 q  quit
 """
 
+# Animation parameters.
+DEFAULT_FRAMES = 100
+DEFAULT_SLEEP = 50
+
 
 def fail(message, try_cmd=""):
     """Print an error message and abort the program."""
@@ -134,6 +139,47 @@ def plist_iter(nodes):
     for key, value in iter((lambda: tuple(itertools.islice(n, 2))), ()):
         assert key.tag == "key"
         yield key.text.strip(), value
+
+
+def real_to_hex(real):
+    """Convert a real color component to a two-character hexadecimal format."""
+    byte = max(0, min(255, round(float(real) * 255.0)))
+    return f"{byte:02x}"
+
+
+def hex_color_value(color):
+    """Convert a color dict to the cs:RRGGBB hexadecimal format."""
+    cs = color["cs"]
+    rr = real_to_hex(color["r"])
+    gg = real_to_hex(color["g"])
+    bb = real_to_hex(color["b"])
+    return f"{cs}:{rr}{gg}{bb}"
+
+
+def interpolate_real(r1, r2, t):
+    """Linearly interpolate between two real color components."""
+    r1 = float(r1)
+    r2 = float(r2)
+    return r1 + t * (r2 - r1)
+
+
+def interpolate_color(color1, color2, t):
+    """Linearly interpolate between two colors."""
+    assert color1["cs"] == color2["cs"]
+    return {
+        "cs": color1["cs"],
+        "r": interpolate_real(color1["r"], color2["r"], t),
+        "g": interpolate_real(color1["g"], color2["g"], t),
+        "b": interpolate_real(color1["b"], color2["b"], t),
+    }
+
+
+def set_iterm_colors(key, value):
+    """Print an iTerm2 escape code to update color settings."""
+    msg = f"\x1B]1337;SetColors={key}={value}\x07"
+    if "TMUX" in os.environ:
+        msg = f"\x1BPtmux;\x1B{msg}\x1B\\"
+    print(msg, end="", flush=True)
 
 
 def read_char():
@@ -199,6 +245,7 @@ class Rainbowterm:
 
     @writer(current)
     def current(self, new_current):
+        assert new_current in self.presets
         write_file(data_file("current"), new_current)
 
     @reader
@@ -249,14 +296,45 @@ class Rainbowterm:
         except KeyError:
             return None
 
+    def config_int(self, section, key):
+        """Returns an int from the config file."""
+        value = self.config_string(section, key)
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
     def set_preset(self, preset):
         """Update the current preset using iTerm2 escape codes."""
-        assert preset in self.presets
-        msg = f"\x1B]1337;SetColors=preset={preset}\x07"
-        if "TMUX" in os.environ:
-            msg = f"\x1BPtmux;\x1B{msg}\x1B\\"
-        print(msg, end="")
+        set_iterm_colors("preset", preset)
         self.current = preset
+
+    def animate_preset(self, preset):
+        """Update the current preset using a fading animation."""
+        frames = self.config_int("animation", "frames") or DEFAULT_FRAMES
+        sleep = self.config_int("animation", "sleep") or DEFAULT_SLEEP
+        if frames <= 0:
+            fail(f"{frames}: invalid animation.frames config")
+        if sleep < 0:
+            fail(f"{sleep}: invalid animation.sleep config")
+        sleep /= 1000.0
+        start = self.presets[self.current]
+        end = self.presets[preset]
+        for i in range(1, frames + 1):
+            for name in start:
+                start_color = start[name]
+                end_color = end[name]
+                color = interpolate_color(start_color, end_color, i / frames)
+                set_iterm_colors(name, hex_color_value(color))
+            print(".", end="", flush=True)
+            time.sleep(sleep)
+        self.set_preset(preset)
+        print()
+        # In case it messed up:
+        time.sleep(0.5)
+        self.set_preset(preset)
 
     def light_dark(self, preset):
         """Return the corresponding light/dark preset, or None."""
@@ -287,17 +365,26 @@ class Rainbowterm:
         if args.preset:
             if args.preset not in self.presets:
                 fail(f"{args.preset}: unknown preset", "list")
-            self.set_preset(args.preset)
+            preset = args.preset
         elif args.light_dark:
-            other = self.light_dark(self.current)
-            self.set_preset(other)
+            preset = self.light_dark(self.current)
+            if not preset:
+                fail(f"{self.current} does not have a light/dark version")
         elif args.random:
             options = [p for p in self.favorites if p != self.current]
             # Handle the case where favorites == [current].
-            choice = random.choice(options) if options else self.current
-            self.set_preset(choice)
+            preset = random.choice(options) if options else self.current
         elif args.smart:
-            fail("unimplemented")
+            # TODO make it smarter based on time, ambient light
+            options = [p for p in self.favorites if p != self.current]
+            preset = random.choice(options) if options else self.current
+        else:
+            # With no arguments, reset the theme (useful if out of sync).
+            preset = self.current
+        if args.animate:
+            self.animate_preset(preset)
+        else:
+            self.set_preset(preset)
 
     def command_interactive(self, args):
         if not sys.stdin.isatty():
@@ -313,7 +400,11 @@ class Rainbowterm:
             nonlocal message
             extra = f" ({message})" if message else ""
             star = "*" if self.current in self.favorites else ""
-            print(f"\r\x1b[2K[{index}{star}] {self.current}{extra}", end=end)
+            print(
+                f"\r\x1b[2K[{index}{star}] {self.current}{extra}",
+                end=end,
+                flush=True,
+            )
 
         print_status()
         while True:
@@ -332,13 +423,17 @@ class Rainbowterm:
                 random.shuffle(preset_list)
                 message = "shuffled"
             elif char == "p":
-                preset = subprocess.run(
-                    ["fzf"],
-                    input=fzf_input,
-                    stdout=subprocess.PIPE,
-                ).stdout.decode().strip()
                 try:
+                    preset = (
+                        subprocess.run(
+                            ["fzf"], input=fzf_input, stdout=subprocess.PIPE
+                        )
+                        .stdout.decode()
+                        .strip()
+                    )
                     index = preset_list.index(preset)
+                except FileNotFoundError:
+                    message = "fzf not installed"
                 except ValueError:
                     message = f"invalid selection"
             elif char == "l":
@@ -405,7 +500,7 @@ def get_parser():
         "help", help="show this help message and exit"
     )
     set_command = commands.add_parser("set", help="set the color preset")
-    set_group = set_command.add_mutually_exclusive_group(required=True)
+    set_group = set_command.add_mutually_exclusive_group()
     set_group.add_argument("-p", "--preset", help="specify a color preset")
     set_group.add_argument(
         "-r", "--random", action="store_true", help="pick a random favorite"
