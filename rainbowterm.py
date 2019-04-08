@@ -400,11 +400,21 @@ class Rainbowterm:
 
     def command_list(self, args):
         if args.current:
-            print(self.current)
+            presets = [self.current]
         elif args.favorites:
-            print("\n".join(sorted(self.favorites)))
+            presets = sorted(self.favorites)
         else:
-            print("\n".join(sorted(self.presets.keys())))
+            presets = sorted(self.presets)
+
+        def verbose(preset, pad):
+            b = self.presets[preset].get("brightness")
+            c = self.presets[preset].get("contrast")
+            return f"{preset:{pad}}  brightness={b:4.3f}  contrast={c:4.3f}"
+
+        if args.verbose:
+            pad = max(len(s) for s in presets)
+            presets = [verbose(p, pad) for p in presets]
+        print("\n".join(presets))
 
     def command_edit(self, args):
         editor = os.environ.get("VISUAL", os.environ.get("EDITOR"))
@@ -540,20 +550,7 @@ class Interactive:
             random.shuffle(self.preset_list)
             self.info("shuffled")
         elif char == "p":
-            try:
-                self.current = (
-                    subprocess.run(
-                        ["fzf"], input=self.fzf_input, stdout=subprocess.PIPE
-                    )
-                    .stdout.decode()
-                    .strip()
-                )
-            except FileNotFoundError:
-                self.info("fzf not installed")
-                return False
-            except ValueError:
-                self.info("invalid selection")
-                return False
+            return self.pick_with_fzf()
         elif char == "l":
             other = rainbow.light_dark(self.current)
             if not other:
@@ -577,6 +574,23 @@ class Interactive:
     def prev(self):
         self.index -= 1
         self.index %= len(self.preset_list)
+
+    def pick_with_fzf(self):
+        try:
+            self.current = (
+                subprocess.run(
+                    ["fzf"], input=self.fzf_input, stdout=subprocess.PIPE
+                )
+                .stdout.decode()
+                .strip()
+            )
+            return True
+        except FileNotFoundError:
+            self.info("fzf not installed")
+            return False
+        except ValueError:
+            self.info("invalid selection")
+            return False
 
     def info(self, message):
         self.info_str = message
@@ -623,17 +637,24 @@ def get_parser():
         "-a", "--animate", action="store_true", help="animate preset transition"
     )
     list_command = commands.add_parser("list", help="list color presets")
-    list_command.add_argument(
+    list_group = list_command.add_mutually_exclusive_group()
+    list_group.add_argument(
         "-c",
         "--current",
         action="store_true",
         help="list only the current preset",
     ),
-    list_command.add_argument(
+    list_group.add_argument(
         "-f",
         "--favorites",
         action="store_true",
         help="list only favorite presets",
+    )
+    list_command.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show brightness and contrast info",
     )
     load_command = commands.add_parser("load", help="load iTerm2 presets")
     load_command.add_argument("-f", "--file", help="specify iTerm2 plist file")
