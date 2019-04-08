@@ -8,6 +8,7 @@ import configparser
 import functools
 import itertools
 import json
+import math
 import os
 import random
 import subprocess
@@ -86,12 +87,10 @@ PLIST_COMPONENT_KEYS = {
 }
 
 INTERACTIVE_MENU = """\
-j  next
-k  previous
-s  shuffle
-p  pick using fzf
-l  switch light/dark
-f  toggle favorite
+j  next               J  next favorite
+k  previous           K  previous favorite
+p  pick using fzf     f  toggle favorite
+l  switch light/dark  s  shuffle
 q  quit
 """
 
@@ -141,6 +140,38 @@ def plist_iter(nodes):
     for key, value in iter((lambda: tuple(itertools.islice(n, 2))), ()):
         assert key.tag == "key"
         yield key.text.strip(), value
+
+
+def color_brightness(color):
+    """Calculate the brightness of an RGB color as a value between 0 and 1."""
+    r = float(color["r"])
+    g = float(color["g"])
+    b = float(color["b"])
+    if "cs" in color and color["cs"].lower() != "srgb":
+        # Generic fallback. https://www.w3.org/TR/AERT/#color-contrast
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    # Calculate relative luminance for the sRGB color space.
+    # https://www.w3.org/TR/WCAG20/#relativeluminancedef
+    def f(x):
+        if x <= 0.03928:
+            return x / 12.92
+        return ((x + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def scheme_brightness(scheme):
+    """Calculate a score from 0 to 1 for the brightness of a color scheme."""
+    return color_brightness(scheme["bg"])
+
+
+def scheme_contrast(scheme):
+    """Calculate a score from 0 to 1 for the contrast of a color scheme."""
+    # https://www.w3.org/TR/WCAG20/#contrast-ratiodef
+    b1 = color_brightness(scheme["fg"])
+    b2 = color_brightness(scheme["bg"])
+    return ((max(b1, b2) + 0.05) / (min(b1, b2) + 0.05) - 1) / 20
 
 
 def real_to_hex(real):
@@ -272,6 +303,9 @@ class Rainbowterm:
         favorites = set(read_file(path).split())
         if not favorites:
             fail("favorites are empty", "edit -f")
+        for preset in favorites:
+            if preset not in self.presets:
+                fail(f"{preset}: invalid preset in favorites", "edit -f")
         return favorites
 
     @writer(favorites)
@@ -288,7 +322,7 @@ class Rainbowterm:
             config.read(path)
         except configparser.Error as ex:
             reason = ex.message.split()[0]
-            fail("{path}: malformed config file ({reason})")
+            fail(f"{path}: malformed config file ({reason})")
         return config
 
     def config_string(self, section, key):
@@ -321,20 +355,21 @@ class Rainbowterm:
             fail(f"{frames}: invalid animation.frames config")
         if sleep < 0:
             fail(f"{sleep}: invalid animation.sleep config")
+        # Convert milliseconds to seconds.
         sleep /= 1000.0
-        start = self.presets[self.current]
-        end = self.presets[preset]
+        start_colors = self.presets[self.current]
+        end_colors = self.presets[preset]
         for i in range(1, frames + 1):
-            for name in start:
-                start_color = start[name]
-                end_color = end[name]
-                color = interpolate_color(start_color, end_color, i / frames)
+            for name in start_colors:
+                start = start_colors[name]
+                end = end_colors[name]
+                color = interpolate_color(start, end, i / frames)
                 set_iterm_colors(name, hex_color_value(color))
             print(".", end="", flush=True)
             time.sleep(sleep)
         self.set_preset(preset)
         print()
-        # In case it messed up:
+        # In case it messed up, try again.
         time.sleep(0.5)
         self.set_preset(preset)
 
@@ -350,11 +385,26 @@ class Rainbowterm:
                             return other
         return None
 
+    def smart_random(self, presets):
+        """Choose a random preset based on the current time."""
+        return random.choice(presets)
+
+        # score presets for
+        # brightness
+        # contrast
+        # want light theme during daytime,
+        # dark theme during nighttime
+        # daytime = well lit = high screen brightness
+        # nighttime = dimly lit = low screen brightness
+        # also want high contrast theme with low screen brightness
+
     def command_list(self, args):
-        if args.favorites:
-            print("\n".join(self.favorites))
+        if args.current:
+            print(self.current)
+        elif args.favorites:
+            print("\n".join(sorted(self.favorites)))
         else:
-            print("\n".join(self.presets.keys()))
+            print("\n".join(sorted(self.presets.keys())))
 
     def command_edit(self, args):
         editor = os.environ.get("VISUAL", os.environ.get("EDITOR"))
@@ -372,17 +422,16 @@ class Rainbowterm:
             preset = self.light_dark(self.current)
             if not preset:
                 fail(f"{self.current} does not have a light/dark version")
-        elif args.random:
-            options = [p for p in self.favorites if p != self.current]
-            # Handle the case where favorites == [current].
-            preset = random.choice(options) if options else self.current
-        elif args.smart:
-            # TODO make it smarter based on time, ambient light
-            options = [p for p in self.favorites if p != self.current]
-            preset = random.choice(options) if options else self.current
+        elif args.random or args.smart:
+            options = list(self.favorites - {self.current})
+            if not options:
+                fail("need at least 2 favorites to choose different random one")
+            select = random.choice if args.random else self.smart_random
+            preset = select(options)
         else:
             # With no arguments, reset the theme (useful if out of sync).
             preset = self.current
+        print(f"setting preset to {preset}")
         if args.animate:
             self.animate_preset(preset)
         else:
@@ -391,72 +440,7 @@ class Rainbowterm:
     def command_interactive(self, args):
         if not sys.stdin.isatty():
             fail("interactive mode requires a tty")
-        print(INTERACTIVE_MENU)
-        preset_list = list(self.presets.keys())
-        fzf_input = "\n".join(preset_list).encode()
-        index = preset_list.index(self.current)
-        message = None
-
-        def print_status(end=""):
-            nonlocal index
-            nonlocal message
-            extra = f" ({message})" if message else ""
-            star = "*" if self.current in self.favorites else ""
-            print(
-                f"\r\x1b[2K[{index}{star}] {self.current}{extra}",
-                end=end,
-                flush=True,
-            )
-
-        print_status()
-        while True:
-            try:
-                char = read_char()
-                print("\r\x1b[2K", end="")
-            except KeyboardInterrupt:
-                break
-            message = None
-            changed = True
-            if char in ("j", " ", "\n"):
-                index = (index + 1) % len(preset_list)
-            elif char == "k":
-                index = (index - 1) % len(preset_list)
-            elif char == "s":
-                random.shuffle(preset_list)
-                message = "shuffled"
-            elif char == "p":
-                try:
-                    preset = (
-                        subprocess.run(
-                            ["fzf"], input=fzf_input, stdout=subprocess.PIPE
-                        )
-                        .stdout.decode()
-                        .strip()
-                    )
-                    index = preset_list.index(preset)
-                except FileNotFoundError:
-                    message = "fzf not installed"
-                except ValueError:
-                    message = f"invalid selection"
-            elif char == "l":
-                other = self.light_dark(preset_list[index])
-                if other:
-                    index = preset_list.index(other)
-                else:
-                    message = "no light/dark version"
-            elif char == "f":
-                if self.current in self.favorites:
-                    self.favorites -= {self.current}
-                    message = "unfavorited"
-                else:
-                    self.favorites |= {self.current}
-                    message = "favorited"
-                changed = False
-            elif char == "q":
-                break
-            self.set_preset(preset_list[index])
-            print_status()
-        print_status(end="\n")
+        Interactive(self).run()
 
     def command_load(self, args):
         plist = args.file or self.config_string("iterm2", "prefs")
@@ -481,15 +465,131 @@ class Rainbowterm:
             fail(f"{plist}: could not find custom presets")
         presets = {}
         for preset_key, node in plist_iter(preset_root):
-            colors = {}
+            scheme = {}
             for color_key, node in plist_iter(node):
                 components = {}
                 for component_key, node in plist_iter(node):
                     components[PLIST_COMPONENT_KEYS[component_key]] = node.text
-                colors[PLIST_COLOR_KEYS[color_key]] = components
-            presets[preset_key] = colors
+                scheme[PLIST_COLOR_KEYS[color_key]] = components
+            scheme["brightness"] = scheme_brightness(scheme)
+            scheme["contrast"] = scheme_contrast(scheme)
+            presets[preset_key] = scheme
         self.presets = presets
         print(f"loaded {len(presets)} presets")
+
+
+class Interactive:
+
+    """Interactive mode for Rainbowterm."""
+
+    def __init__(self, rainbow):
+        self.rainbow = rainbow
+        self.preset_list = list(rainbow.presets.keys())
+        self.index = self.preset_list.index(rainbow.current)
+        self.fzf_input = "\n".join(self.preset_list).encode()
+        self.info_str = None
+
+    @property
+    def current(self):
+        return self.preset_list[self.index]
+
+    @current.setter
+    def current(self, new_current):
+        self.index = self.preset_list.index(new_current)
+
+    def run(self):
+        """Run the interactive mode loop."""
+        print(INTERACTIVE_MENU)
+        self.print_status()
+        while True:
+            try:
+                char = read_char()
+                print("\r\x1b[2K", end="")
+            except KeyboardInterrupt:
+                break
+            if char in ("q", "Q"):
+                break
+            changed = self.dispatch(char)
+            if changed:
+                self.rainbow.set_preset(self.current)
+            self.print_status()
+        self.print_status(end="\n")
+
+    def dispatch(self, char):
+        """Dispatch a command by the character the user typed."""
+        rainbow = self.rainbow
+        if char in ("j", " ", "\n"):
+            self.next()
+        elif char == "k":
+            self.prev()
+        elif char == "J":
+            if not rainbow.favorites:
+                self.info("no favorites")
+                return False
+            self.next()
+            while self.current not in rainbow.favorites:
+                self.next()
+        elif char == "K":
+            if not rainbow.favorites:
+                self.info("no favorites")
+                return False
+            self.prev()
+            while self.current not in rainbow.favorites:
+                self.prev()
+        elif char == "s":
+            random.shuffle(self.preset_list)
+            self.info("shuffled")
+        elif char == "p":
+            try:
+                self.current = (
+                    subprocess.run(
+                        ["fzf"], input=self.fzf_input, stdout=subprocess.PIPE
+                    )
+                    .stdout.decode()
+                    .strip()
+                )
+            except FileNotFoundError:
+                self.info("fzf not installed")
+                return False
+            except ValueError:
+                self.info("invalid selection")
+                return False
+        elif char == "l":
+            other = rainbow.light_dark(self.current)
+            if not other:
+                self.info("no light/dark version")
+                return False
+            self.current = other
+        elif char == "f":
+            if self.current in rainbow.favorites:
+                rainbow.favorites -= {self.current}
+                self.info("unfavorited")
+            else:
+                rainbow.favorites |= {self.current}
+                self.info("favorited")
+            return False
+        return True
+
+    def next(self):
+        self.index += 1
+        self.index %= len(self.preset_list)
+
+    def prev(self):
+        self.index -= 1
+        self.index %= len(self.preset_list)
+
+    def info(self, message):
+        self.info_str = message
+
+    def print_status(self, end=""):
+        extra = f" ({self.info_str})" if self.info_str else ""
+        star = "*" if self.rainbow.current in self.rainbow.favorites else ""
+        print(
+            f"\r\x1b[2K[{self.index}{star}] {self.current}{extra}",
+            end=end,
+            flush=True,
+        )
+        self.info_str = None
 
 
 def get_parser():
@@ -523,6 +623,12 @@ def get_parser():
         "-a", "--animate", action="store_true", help="animate preset transition"
     )
     list_command = commands.add_parser("list", help="list color presets")
+    list_command.add_argument(
+        "-c",
+        "--current",
+        action="store_true",
+        help="list only the current preset",
+    ),
     list_command.add_argument(
         "-f",
         "--favorites",
