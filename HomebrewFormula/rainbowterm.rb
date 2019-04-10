@@ -3,8 +3,8 @@ class Rainbowterm < Formula
 
   desc "Tool for managing color schemes in iTerm2"
   homepage "https://github.com/mk12/rainbowterm"
-  url "https://github.com/mk12/rainbowterm/archive/0.3.0.tar.gz"
-  sha256 "4de619c125e5430f367fd63357ffbd91b83f87719e64a80e7a9663ffcbe94584"
+  url "https://github.com/mk12/rainbowterm/archive/0.4.0.tar.gz"
+  sha256 "7c960d5532f5e5d3200c0e428203eafba275d1d63110de96253303a53f8e4b52"
   head "https://github.com/mk12/rainbowterm.git"
 
   depends_on "python"
