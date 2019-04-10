@@ -102,7 +102,7 @@ j  next               J  next favorite
 k  previous           K  previous favorite
 p  pick using fzf     f  toggle favorite
 l  switch light/dark  s  shuffle
-q  quit
+q  quit               i  show info
 """
 
 # Maximum entries to store in the smart_history file.
@@ -885,6 +885,11 @@ class Interactive:
             else:
                 rainbow.favorites |= {self.current}
                 self.info("favorited")
+            return False
+        elif char == "i":
+            brightness = rainbow.presets[self.current]["brightness"]
+            contrast = rainbow.presets[self.current]["contrast"]
+            self.info(f"brightness={brightness:.3f}, contrast={contrast:.3f}")
             return False
         else:
             return False

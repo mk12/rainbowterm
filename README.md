@@ -51,7 +51,7 @@ j  next               J  next favorite
 k  previous           K  previous favorite
 p  pick using fzf     f  toggle favorite
 l  switch light/dark  s  shuffle
-q  quit
+q  quit               i  show info
 ```
 
 Use <kbd>j</kbd> and <kbd>k</kbd> to navigate through the color presets and instantly apply them. If you have [fzf][fzf], use <kbd>p</kbd> to fuzzy-search for presets by name.
