@@ -98,21 +98,21 @@ reset_delay = 500.0
 # Config for 'rainbowterm set -s'
 [smart]
 # Weights for the three components:
-sun_weight = 4.0      # prefer light/dark themes during the day/night
+sun_weight = 10.0     # prefer light/dark themes during the day/night
 display_weight = 2.0  # prefer low/high contrast when display is bright/dim
 random_weight = 1.0   # uniform random component
 # Sun parameters:
-sun_bimodeal = true   # TODO
-sun_offset = 0.0      # TODO
-sun_min = 0.0         # TODO
-sun_max = 1.0         # TODO
+sun_bimodeal = true
+sun_offset = 0.0
+sun_min = 0.0
+sun_max = 1.0
 # Display parameters:
 display_number = 0    # which display to consider (see 'brightness -l')
-display_offset = 0.0  # TODO
-display_min = 0.25    # TODO
-display_max = 0.75    # TODO
-# Avoid repeating the past N smart choices (here, N=1):
-avoid_repeat = 1       
+display_offset = 0.0
+display_min = 0.2
+display_max = 0.5
+# Avoid repeating the past 2 smart choices:
+avoid_repeat = 2
 ```
 
 ## Dependencies
