@@ -102,7 +102,7 @@ sun_weight = 10.0     # prefer light/dark themes during the day/night
 display_weight = 2.0  # prefer low/high contrast when display is bright/dim
 random_weight = 1.0   # uniform random component
 # Sun parameters:
-sun_bimodeal = true
+sun_bimodal = true
 sun_offset = 0.0
 sun_min = 0.0
 sun_max = 1.0
@@ -114,6 +114,8 @@ display_max = 0.5
 # Avoid repeating the past 2 smart choices:
 avoid_repeat = 2
 ```
+
+_TODO: Document the rest of the sun/display parameters._
 
 ## Dependencies
 
