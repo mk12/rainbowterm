@@ -2,7 +2,7 @@
 
 """Tool for managing iTerm2 color presets."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import argparse
 import configparser
@@ -327,9 +327,9 @@ def display_brightness(display_num):
     others. If the display's brightness cannot be determined, returns None.
     """
     try:
-        lines = execute("brightness", ["-l"]).split("\n")
+        output = execute("brightness", ["-l"], stderr=subprocess.DEVNULL)
         pattern = re.compile(f"^display {display_num}: brightness ([0-9.]+)$")
-        for line in lines:
+        for line in output.split("\n"):
             match = pattern.search(line)
             if match:
                 return float(match.group(1))
@@ -672,38 +672,54 @@ class Rainbowterm:
 
     def command_list(self, args):
         """List color presets, optionally with additional information."""
+        # Collect the list of presets based on the arguments.
+        lines = None
         if args.current:
             presets = [self.current]
         elif args.favorites:
             presets = sorted(self.favorites)
+        elif args.smart:
+            if args.scores:
+                # Too confusing: is it scores now, or at that time? Do we sort?
+                fail("cannot use --scores with --smart")
+            now = datetime.now().astimezone()
+            midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            times = [midnight + timedelta(hours=i) for i in range(24)]
+            presets = [
+                self.smart_choice(self.favorites, t, consider_repetition=False)
+                for t in times
+            ]
+            lines = [f"{t}: {preset}" for t, preset in zip(times, presets)]
         else:
             presets = sorted(self.presets)
 
-        if not (args.verbose or args.smart):
-            print("\n".join(presets))
+        # Simple case: just print the lines.
+        if not lines:
+            lines = presets
+        if not (args.verbose or args.scores):
+            print("\n".join(lines))
             return
 
         def verbose_info(preset):
             b = self.presets[preset].get("brightness")
             c = self.presets[preset].get("contrast")
-            return [f"brightness={b:4.3f}", f"contrast={c:4.3f}"]
+            return [f"brightness={b:.3f}", f"contrast={c:.3f}"]
 
-        def smart_info(preset, score):
-            return [f"{key}={val:4.3f}" for key, val in score.items()]
+        def smart_info(score):
+            return [f"{key}={val:06.3f}" for key, val in score.items()]
 
-        pad = max(len(s) for s in presets)
-        lines = [(p, [f"{p:{pad}}"]) for p in presets]
+        # Add extra information to all the lines.
+        pad = max(len(line) for line in lines)
+        pairs = [(p, [f"{line:{pad}}"]) for p, line in zip(presets, lines)]
         if args.verbose:
             # Add brightness and contrast info.
-            lines = [(p, items + verbose_info(p)) for p, items in lines]
-        if args.smart:
+            pairs = [(p, items + verbose_info(p)) for p, items in pairs]
+        if args.scores:
             # Add smart scores and sort by descending total score.
             scores = self.smart_scores(presets, parse_time(args.time))
-            lines = [
-                (p, items + smart_info(p, scores[p])) for p, items in lines
-            ]
-            lines.sort(key=lambda line: scores[line[0]]["total"], reverse=True)
-        print("\n".join("  ".join(items) for _, items in lines))
+            pairs = [(p, items + smart_info(scores[p])) for p, items in pairs]
+            pairs.sort(key=lambda line: scores[line[0]]["total"], reverse=True)
+        print("\n".join("  ".join(items) for _, items in pairs))
 
     def command_edit(self, args):
         """Edit one of the configuration files."""
@@ -946,13 +962,13 @@ def get_parser():
         "-a", "--animate", action="store_true", help="animate preset transition"
     )
     set_command.add_argument(
-        "-t", "--time", help="simulate given time for --smart"
-    )
-    set_command.add_argument(
         "-R",
         "--allow-repeat",
         action="store_true",
-        help="allow repeats for -r/-s",
+        help="allow repeats for --random/--smart",
+    )
+    set_command.add_argument(
+        "-t", "--time", help="simulate given time for --smart"
     )
     list_command = commands.add_parser("list", help="list color presets")
     list_group = list_command.add_mutually_exclusive_group()
@@ -968,6 +984,12 @@ def get_parser():
         action="store_true",
         help="list only favorite presets",
     )
+    list_group.add_argument(
+        "-s",
+        "--smart",
+        action="store_true",
+        help="list 24h of set --smart choices",
+    )
     list_command.add_argument(
         "-v",
         "--verbose",
@@ -975,10 +997,13 @@ def get_parser():
         help="show brightness and contrast info",
     )
     list_command.add_argument(
-        "-s", "--smart", action="store_true", help="show scores for set --smart"
+        "-S",
+        "--scores",
+        action="store_true",
+        help="show scores for set --smart",
     )
     list_command.add_argument(
-        "-t", "--time", help="simulate given time for --smart"
+        "-t", "--time", help="simulate given time for --scores"
     )
     load_command = commands.add_parser("load", help="load iTerm2 presets")
     load_command.add_argument(
